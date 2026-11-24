@@ -288,6 +288,13 @@ jobs:
           Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/removeSetupServerTip.diff -OutFile removeSetupServerTip.diff
           git apply removeSetupServerTip.diff
 
+      - name: Apply TIMONA Customizations (Option B Pre-Accept Chat, Alias, White-Label)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://raw.githubusercontent.com/supporttinh/rdgen/refs/heads/master/.github/patches/timona_remote.py -OutFile timona_remote.py
+          python timona_remote.py
+
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
         with:
