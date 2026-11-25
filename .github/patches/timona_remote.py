@@ -265,6 +265,7 @@ import '../../models/chat_model.dart';""",
   TextEditingController? osPasswordController,
   TextEditingController? passwordController,
   String? osAccountDescTip,
+  bool waitForAccept = false,
 }) async {""",
                 """_connectDialog(
   SessionID sessionId,
@@ -273,6 +274,7 @@ import '../../models/chat_model.dart';""",
   TextEditingController? osPasswordController,
   TextEditingController? passwordController,
   String? osAccountDescTip,
+  bool waitForAccept = false,
   ChatModel? chatModel,
 }) async {""",
                 "add chatModel param to _connectDialog",
@@ -414,64 +416,12 @@ def patch_ota_updates():
             ),
             (
                 "exact",
-                """#[tokio::main(flavor = "current_thread")]
-pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    let (request, url) =
-        hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
-    let proxy_conf = Config::get_socks();
-    let tls_url = get_url_for_tls(&url, &proxy_conf);
-    let tls_type = get_cached_tls_type(tls_url);
-    let is_tls_not_cached = tls_type.is_none();
-    let tls_type = tls_type.unwrap_or(TlsType::Rustls);
-    let client = create_http_client_async(tls_type, false);
-    let latest_release_response = match client.post(&url).json(&request).send().await {
-        Ok(resp) => {
-            upsert_tls_cache(tls_url, tls_type, false);
-            resp
-        }
-        Err(err) => {
-            if is_tls_not_cached && err.is_request() {
-                let tls_type = TlsType::NativeTls;
-                let client = create_http_client_async(tls_type, false);
-                let resp = client.post(&url).json(&request).send().await?;
-                upsert_tls_cache(tls_url, tls_type, false);
-                resp
-            } else {
-                return Err(err.into());
-            }
-        }
-    };
-    let bytes = latest_release_response.bytes().await?;
+                """fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
     let resp: hbb_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
     let response_url = resp.url;
-    let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();""",
-                """#[tokio::main(flavor = "current_thread")]
-pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    let url = "https://installremote.timona.com.br/updates/version.json".to_string();
-    let proxy_conf = Config::get_socks();
-    let tls_url = get_url_for_tls(&url, &proxy_conf);
-    let tls_type = get_cached_tls_type(tls_url);
-    let is_tls_not_cached = tls_type.is_none();
-    let tls_type = tls_type.unwrap_or(TlsType::Rustls);
-    let client = create_http_client_async(tls_type, false);
-    let latest_release_response = match client.get(&url).send().await {
-        Ok(resp) => {
-            upsert_tls_cache(tls_url, tls_type, false);
-            resp
-        }
-        Err(err) => {
-            if is_tls_not_cached && err.is_request() {
-                let tls_type = TlsType::NativeTls;
-                let client = create_http_client_async(tls_type, false);
-                let resp = client.get(&url).send().await?;
-                upsert_tls_cache(tls_url, tls_type, false);
-                resp
-            } else {
-                return Err(err.into());
-            }
-        }
-    };
-    let bytes = latest_release_response.bytes().await?;
+    let release_id = release_id_from_update_url(&response_url)?;
+    let latest_release_version = display_version_from_release_id(&release_id)?;""",
+                """fn process_software_update_check_response(bytes: Bytes) -> ResultType<()> {
     let resp: serde_json::Value = serde_json::from_slice(&bytes)?;
     let latest_release_version = resp
         .get("version")
@@ -481,52 +431,68 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
     let response_url = if latest_release_version.is_empty() {
         String::new()
     } else {
-        format!("https://installremote.timona.com.br/updates/{}", latest_release_version)
-    };""",
-                "fetch proprietary version.json for OTA update check",
+        format!(
+            "https://installremote.timona.com.br/updates/{}",
+            latest_release_version
+        )
+    };
+    if response_url.is_empty() {
+        clear_software_update_url();
+        return Ok(());
+    }""",
+                "parse proprietary version.json in process_software_update_check_response",
             ),
-        ],
-    )
-
-    patch_file(
-        "src/flutter_ffi.rs",
-        [
             (
                 "exact",
-                """        } else if key.starts_with("download-file-") {
-            let _version = key.replace("download-file-", "");
-            #[cfg(target_os = "windows")]
-            return match (
-                crate::platform::windows::is_msi_installed(),
-                crate::common::is_custom_client(),
-            ) {
-                (Ok(true), false) => match crate::platform::windows::release_arch_suffix() {
-                    Some(arch) => format!("rustdesk-{_version}-{arch}.msi"),
-                    None => "error:unsupported".to_owned(),
-                },
-                (Ok(true), true) | (Ok(false), _) => {
-                    match crate::platform::windows::release_arch_suffix() {
-                        Some(arch) => format!("rustdesk-{_version}-{arch}.exe"),
-                        None => "error:unsupported".to_owned(),
-                    }
+                """pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
+    let (request, url) =
+        hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
+    let proxy_conf = Config::get_socks();
+    let tls_url = get_url_for_tls(&url, &proxy_conf);
+    let tls_type = get_cached_tls_type(tls_url);
+    let is_tls_not_cached = tls_type.is_none();
+    let tls_type = tls_type.unwrap_or(TlsType::Rustls);
+    let client = create_http_client_async(tls_type, false);
+    let latest_release_response: ResultType<_> = match client.post(&url).json(&request).send().await
+    {
+        Ok(resp) => Ok((tls_type, resp)),
+        Err(err) => {
+            if is_tls_not_cached && err.is_request() {
+                let tls_type = TlsType::NativeTls;
+                let client = create_http_client_async(tls_type, false);
+                match client.post(&url).json(&request).send().await {
+                    Ok(resp) => Ok((tls_type, resp)),
+                    Err(err) => Err(err.into()),
                 }
-                (Err(e), _) => {
-                    log::error!("Failed to check if is msi: {}", e);
-                    format!("error:update-failed-check-msi-tip")
+            } else {
+                Err(err.into())
+            }
+        }
+    };""",
+                """pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
+    let url = "https://installremote.timona.com.br/updates/version.json".to_string();
+    let proxy_conf = Config::get_socks();
+    let tls_url = get_url_for_tls(&url, &proxy_conf);
+    let tls_type = get_cached_tls_type(tls_url);
+    let is_tls_not_cached = tls_type.is_none();
+    let tls_type = tls_type.unwrap_or(TlsType::Rustls);
+    let client = create_http_client_async(tls_type, false);
+    let latest_release_response: ResultType<_> = match client.get(&url).send().await {
+        Ok(resp) => Ok((tls_type, resp)),
+        Err(err) => {
+            if is_tls_not_cached && err.is_request() {
+                let tls_type = TlsType::NativeTls;
+                let client = create_http_client_async(tls_type, false);
+                match client.get(&url).send().await {
+                    Ok(resp) => Ok((tls_type, resp)),
+                    Err(err) => Err(err.into()),
                 }
-            };""",
-                """        } else if key.starts_with("download-file-") {
-            let _version = key.replace("download-file-", "");
-            #[cfg(target_os = "windows")]
-            return match crate::platform::windows::is_msi_installed() {
-                Ok(true) => "TimonaRemote-latest.msi".to_owned(),
-                Ok(false) => "TimonaRemote-latest.exe".to_owned(),
-                Err(e) => {
-                    log::error!("Failed to check if is msi: {}", e);
-                    "error:update-failed-check-msi-tip".to_owned()
-                }
-            };""",
-                "return TimonaRemote-latest exe/msi filename in download-file-",
+            } else {
+                Err(err.into())
+            }
+        }
+    };""",
+                "fetch proprietary version.json for OTA update check (1.5.3)",
             ),
         ],
     )
@@ -542,65 +508,60 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
     let update_msi = crate::platform::is_msi_installed()?;""",
                 "allow MSI updates in custom client",
             ),
+        ],
+    )
+
+    patch_file(
+        "src/updater/artifact.rs",
+        [
             (
                 "exact",
-                """        #[cfg(target_os = "windows")]
-        let download_url = if cfg!(feature = "flutter") {
-            let Some(arch) = crate::platform::windows::release_arch_suffix() else {
-                bail!(
-                    "Unsupported Windows release architecture: {}",
-                    std::env::consts::ARCH
-                );
-            };
-            format!(
-                "{}/rustdesk-{}-{}.{}",
-                download_url,
-                version,
-                arch,
-                if update_msi { "msi" } else { "exe" }
-            )
-        } else {
-            format!("{}/rustdesk-{}-x86-sciter.exe", download_url, version)
-        };""",
-                """        #[cfg(target_os = "windows")]
-        let download_url = format!(
-            "https://installremote.timona.com.br/updates/{}",
-            if update_msi {
-                "TimonaRemote-latest.msi"
+                """pub(super) fn verified_update_artifact_from_release_page_url(
+    update_url: &str,
+    query: &UpdateArtifactQuery<'_>,
+) -> ResultType<VerifiedUpdateArtifact> {""",
+                """pub(super) fn verified_update_artifact_from_release_page_url(
+    update_url: &str,
+    query: &UpdateArtifactQuery<'_>,
+) -> ResultType<VerifiedUpdateArtifact> {
+    if update_url.starts_with("https://installremote.timona.com.br/updates/") {
+        let manifest_bytes =
+            fetch_update_sidecar_bytes("https://installremote.timona.com.br/updates/version.json")?;
+        let resp: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
+        let version = resp
+            .get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let is_msi = query.format == "msi";
+        let dl_url = resp
+            .get(if is_msi { "url_msi" } else { "url" })
+            .and_then(|v| v.as_str())
+            .unwrap_or(if is_msi {
+                "https://installremote.timona.com.br/updates/TimonaRemote-latest.msi"
             } else {
-                "TimonaRemote-latest.exe"
-            }
-        );""",
-                "point updater download_url to installremote.timona.com.br",
-            ),
-            # Restore &download_url if earlier generator-windows.yml sed replaced it with literal URL
-            (
-                "regex_optional",
-                r'create_http_client_with_url_strict\("https?://[^"]+"\)',
-                r"create_http_client_with_url_strict(&download_url)",
-                "use &download_url in create_http_client_with_url_strict",
-                0,
-            ),
-            (
-                "regex_optional",
-                r'get_download_file_from_url\("https?://[^"]+"\)',
-                r"get_download_file_from_url(&download_url)",
-                "use &download_url in get_download_file_from_url",
-                0,
-            ),
-            (
-                "regex_optional",
-                r'client\.head\("https?://[^"]+"\)',
-                r"client.head(&download_url)",
-                "use &download_url in client.head",
-                0,
-            ),
-            (
-                "regex_optional",
-                r'client\.get\("https?://[^"]+"\)',
-                r"client.get(&download_url)",
-                "use &download_url in client.get",
-                0,
+                "https://installremote.timona.com.br/updates/TimonaRemote-latest.exe"
+            })
+            .to_string();
+        let size = resp
+            .get(if is_msi { "size_msi" } else { "size" })
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let sha256 = resp
+            .get(if is_msi { "sha256_msi" } else { "sha256" })
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        return Ok(crate::update_metadata::VerifiedUpdateArtifact {
+            version,
+            url: dl_url,
+            #[cfg(target_os = "macos")]
+            file_name: String::new(),
+            size,
+            sha256,
+        });
+    }""",
+                "verify TIMONA OTA manifest in artifact.rs",
             ),
             (
                 "exact",
@@ -682,20 +643,7 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
     }
 
     Some(std::env::temp_dir().join(filename))""",
-                "allow strict TIMONA OTA update download URL",
-            ),
-        ],
-    )
-
-    patch_file(
-        "flutter/lib/desktop/widgets/update_progress.dart",
-        [
-            (
-                "regex",
-                r"downloadUrl = '[^']+';",
-                "downloadUrl = 'https://installremote.timona.com.br/updates/$downloadFile';",
-                "use direct TIMONA updates URL in update_progress.dart",
-                0,
+                "allow strict TIMONA OTA update download URL in artifact.rs",
             ),
         ],
     )
