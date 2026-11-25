@@ -947,6 +947,32 @@ pub fn is_custom_client() -> bool {""",
         ],
     )
 
+    patch_file(
+        "src/platform/windows.rs",
+        [
+            (
+                "exact",
+                'fn get_install_info_with_subkey(subkey: String) -> (String, String, String, String) {\n    let mut path = get_reg_of(&subkey, "InstallLocation");',
+                '''fn get_install_info_with_subkey(subkey: String) -> (String, String, String, String) {
+    if crate::common::is_unified_timona_agent() {
+        if let Ok(cur_exe) = std::env::current_exe() {
+            if let Some(dir) = cur_exe.parent() {
+                let path = dir.to_string_lossy().to_string();
+                let exe = cur_exe.to_string_lossy().to_string();
+                let start_menu = format!(
+                    "%ProgramData%\\\\Microsoft\\\\Windows\\\\Start Menu\\\\Programs\\\\{}",
+                    crate::get_app_name()
+                );
+                return (subkey, path, start_menu, exe);
+            }
+        }
+    }
+    let mut path = get_reg_of(&subkey, "InstallLocation");''',
+                "report unified Program Files Timona Agent remote dir as installed",
+            ),
+        ],
+    )
+
 
 if __name__ == "__main__":
     patch_connection_rs()
