@@ -215,12 +215,137 @@ import '../../models/chat_model.dart';""",
 }""",
                 "embed live ChatPage inside showWaitAcceptDialog",
             ),
+            (
+                "exact",
+                """void wrongPasswordDialog(SessionID sessionId,
+    OverlayDialogManager dialogManager, type, title, text) {""",
+                """void wrongPasswordDialog(SessionID sessionId,
+    OverlayDialogManager dialogManager, type, title, text,
+    {ChatModel? chatModel}) {""",
+                "add chatModel param to wrongPasswordDialog",
+            ),
+            (
+                "exact",
+                """    submit() {
+      enterPasswordDialog(sessionId, dialogManager);
+    }""",
+                """    submit() {
+      enterPasswordDialog(sessionId, dialogManager, chatModel: chatModel);
+    }""",
+                "forward chatModel from wrongPasswordDialog to enterPasswordDialog",
+            ),
+            (
+                "exact",
+                """void enterPasswordDialog(
+    SessionID sessionId, OverlayDialogManager dialogManager) async {
+  await _connectDialog(
+    sessionId,
+    dialogManager,
+    passwordController: TextEditingController(),
+  );
+}""",
+                """void enterPasswordDialog(
+    SessionID sessionId, OverlayDialogManager dialogManager,
+    {ChatModel? chatModel}) async {
+  await _connectDialog(
+    sessionId,
+    dialogManager,
+    passwordController: TextEditingController(),
+    chatModel: chatModel,
+  );
+}""",
+                "add chatModel param to enterPasswordDialog",
+            ),
+            (
+                "exact",
+                """_connectDialog(
+  SessionID sessionId,
+  OverlayDialogManager dialogManager, {
+  TextEditingController? osUsernameController,
+  TextEditingController? osPasswordController,
+  TextEditingController? passwordController,
+  String? osAccountDescTip,
+}) async {""",
+                """_connectDialog(
+  SessionID sessionId,
+  OverlayDialogManager dialogManager, {
+  TextEditingController? osUsernameController,
+  TextEditingController? osPasswordController,
+  TextEditingController? passwordController,
+  String? osAccountDescTip,
+  ChatModel? chatModel,
+}) async {""",
+                "add chatModel param to _connectDialog",
+            ),
+            (
+                "exact",
+                """      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        osAccountWidget(),
+        osUsernameController == null || passwordController == null
+            ? Offstage()
+            : Container(height: 12),
+        passwdWidget(),
+      ]),""",
+                """      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        osAccountWidget(),
+        osUsernameController == null || passwordController == null
+            ? Offstage()
+            : Container(height: 12),
+        passwdWidget(),
+        if (chatModel != null) ...[
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Chat pré-aceite com o usuário:',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: 380,
+            height: 220,
+            decoration: BoxDecoration(
+              border: Border.all(color: Theme.of(context).dividerColor),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: ChatPage(chatModel: chatModel),
+            ),
+          ),
+        ],
+      ]),""",
+                "embed live pre-accept ChatPage inside _connectDialog",
+            ),
         ],
     )
 
     patch_file(
         "flutter/lib/models/model.dart",
         [
+            (
+                "exact",
+                """    if (type == 're-input-password') {
+      wrongPasswordDialog(sessionId, dialogManager, type, title, text);
+    } else if (type == 'input-2fa') {
+      enter2FaDialog(sessionId, dialogManager);
+    } else if (type == 'input-password') {
+      enterPasswordDialog(sessionId, dialogManager);""",
+                """    if (type == 're-input-password') {
+      parent.target?.chatModel
+          .changeCurrentKey(MessageKey(peerId, ChatModel.clientModeID));
+      wrongPasswordDialog(sessionId, dialogManager, type, title, text,
+          chatModel: parent.target?.chatModel);
+    } else if (type == 'input-2fa') {
+      enter2FaDialog(sessionId, dialogManager);
+    } else if (type == 'input-password') {
+      parent.target?.chatModel
+          .changeCurrentKey(MessageKey(peerId, ChatModel.clientModeID));
+      enterPasswordDialog(sessionId, dialogManager,
+          chatModel: parent.target?.chatModel);""",
+                "pass chatModel to password/pre-accept dialogs in model.dart",
+            ),
             (
                 "exact",
                 "    } else if (type == 'wait-remote-accept-nook') {\n      showWaitAcceptDialog(sessionId, type, title, text, dialogManager);",
