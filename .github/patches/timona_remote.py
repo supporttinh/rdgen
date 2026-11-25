@@ -787,6 +787,166 @@ def patch_settings_and_whitelabel():
             lang_count += 1
     print(f"[OK] White-labeled translation values in {lang_count} language files")
 
+    # White-label hardcoded AppData / Staging / Runner metadata / Org
+    patch_file(
+        "libs/hbb_common/src/config.rs",
+        [
+            (
+                "exact",
+                '    pub static ref ORG: RwLock<String> = RwLock::new("com.carriez".to_owned());',
+                '    pub static ref ORG: RwLock<String> = RwLock::new("br.com.timona".to_owned());',
+                "white-label hbb_common ORG",
+            ),
+            (
+                "exact",
+                '    pub static ref APP_NAME: RwLock<String> = RwLock::new("RustDesk".to_owned());',
+                '    pub static ref APP_NAME: RwLock<String> = RwLock::new("TimonaRemote".to_owned());',
+                "white-label default APP_NAME before custom config loads",
+            ),
+        ],
+    )
+
+    patch_file(
+        "src/platform/windows.rs",
+        [
+            (
+                "exact",
+                '    get_public_base_dir()\n        .join("RustDesk")\n        .join("RustDeskCustomClientStaging")',
+                '    get_public_base_dir()\n        .join("TimonaRemote")\n        .join("TimonaRemoteCustomClientStaging")',
+                "white-label ProgramData staging folder",
+            ),
+            (
+                "exact",
+                '        .join("rustdesk-sciter");\n    let dst = dir.join("rustdesk.exe");',
+                '        .join("timonaremote-sciter");\n    let dst = dir.join("TimonaRemote.exe");',
+                "white-label portable sciter helper folder",
+            ),
+        ],
+    )
+
+    patch_file(
+        "flutter/windows/runner/Runner.rc",
+        [
+            (
+                "regex_optional",
+                r'Purslane Tech Pte\. Ltd\.|Purslane Ltd',
+                'TIMONA Tecnologia',
+                "white-label Runner.rc CompanyName/Copyright",
+                0,
+            ),
+            (
+                "regex_optional",
+                r'VALUE "FileDescription", "[^"]*"',
+                'VALUE "FileDescription", "TIMONA Remote"',
+                "white-label Runner.rc FileDescription",
+                0,
+            ),
+            (
+                "regex_optional",
+                r'VALUE "InternalName", "[^"]*"',
+                'VALUE "InternalName", "TimonaRemote"',
+                "white-label Runner.rc InternalName",
+                0,
+            ),
+            (
+                "regex_optional",
+                r'VALUE "OriginalFilename", "[^"]*"',
+                'VALUE "OriginalFilename", "TimonaRemote.exe"',
+                "white-label Runner.rc OriginalFilename",
+                0,
+            ),
+            (
+                "regex_optional",
+                r'VALUE "ProductName", "[^"]*"',
+                'VALUE "ProductName", "TIMONA Remote"',
+                "white-label Runner.rc ProductName",
+                0,
+            ),
+        ],
+    )
+
+    patch_file(
+        "libs/base/src/platform/mod.rs",
+        [
+            (
+                "exact",
+                '        linux::system_message(\n            "RustDesk",',
+                '        linux::system_message(\n            "TIMONA Remote",',
+                "white-label crash alert app name",
+            ),
+        ],
+    )
+
+
+def patch_unified_tray_suppression():
+    # Quando instalado dentro de Timona-Unified-Agent (SupportTI.exe ao lado), suprime o segundo icone de tray
+    patch_file(
+        "src/common.rs",
+        [
+            (
+                "exact",
+                "#[inline]\npub fn is_custom_client() -> bool {",
+                """#[inline]
+pub fn is_unified_timona_agent() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| {
+            p.parent()
+                .and_then(|d| d.parent())
+                .map(|root| root.join("SupportTI.exe").is_file())
+        })
+        .unwrap_or(false)
+}
+
+#[inline]
+pub fn is_custom_client() -> bool {""",
+                "add is_unified_timona_agent detection helper",
+            ),
+        ],
+    )
+
+    patch_file(
+        "src/tray.rs",
+        [
+            (
+                "exact",
+                '    if crate::ui_interface::get_builtin_option(keys::OPTION_HIDE_TRAY) == "Y" {',
+                '    if crate::ui_interface::get_builtin_option(keys::OPTION_HIDE_TRAY) == "Y"\n        || crate::common::is_unified_timona_agent()\n    {',
+                "suppress duplicate tray icon when running under unified SupportTI agent",
+            ),
+        ],
+    )
+
+    patch_file(
+        "src/core_main.rs",
+        [
+            (
+                "exact",
+                '        if should_check_start_tray && !crate::check_process("--tray", true) {',
+                '        if should_check_start_tray && !crate::common::is_unified_timona_agent() && !crate::check_process("--tray", true) {',
+                "skip launching redundant tray from main window when unified",
+            ),
+            (
+                "exact",
+                '        } else if args[0] == "--tray" {\n            if !crate::check_process("--tray", true) {',
+                '        } else if args[0] == "--tray" {\n            if !crate::common::is_unified_timona_agent() && !crate::check_process("--tray", true) {',
+                "skip --tray invocation when unified",
+            ),
+        ],
+    )
+
+    patch_file(
+        "src/server/connection.rs",
+        [
+            (
+                "exact",
+                '                if crate::is_server() && !crate::check_process("--tray", false) {',
+                '                if crate::is_server() && !crate::common::is_unified_timona_agent() && !crate::check_process("--tray", false) {',
+                "skip spawning redundant tray from server connection loop when unified",
+            ),
+        ],
+    )
+
 
 if __name__ == "__main__":
     patch_connection_rs()
@@ -795,4 +955,5 @@ if __name__ == "__main__":
     patch_technician_preaccept_chat()
     patch_ota_updates()
     patch_settings_and_whitelabel()
+    patch_unified_tray_suppression()
     print("[TIMONA] All customizations applied successfully.")
