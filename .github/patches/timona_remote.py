@@ -142,187 +142,7 @@ def patch_server_page_dart():
 
 
 def patch_technician_preaccept_chat():
-    # Lado do tecnico: incluir chat ao vivo dentro de showWaitAcceptDialog + inicializar ChatModel
-    patch_file(
-        "flutter/lib/common/widgets/dialog.dart",
-        [
-            (
-                "exact",
-                "import 'address_book.dart';",
-                """import 'address_book.dart';
-import 'chat_page.dart';
-import '../../models/chat_model.dart';""",
-                "import ChatPage and ChatModel",
-            ),
-            (
-                "exact",
-                """void showWaitAcceptDialog(SessionID sessionId, String type, String title,
-    String text, OverlayDialogManager dialogManager) {
-  dialogManager.dismissAll();
-  dialogManager.show((setState, close, context) {
-    onCancel() {
-      closeConnection();
-    }
-
-    return CustomAlertDialog(
-      title: null,
-      content: msgboxContent(type, title, text),
-      actions: [
-        dialogButton('Cancel', onPressed: onCancel, isOutline: true),
-      ],
-      onCancel: onCancel,
-    );
-  });
-}""",
-                """void showWaitAcceptDialog(SessionID sessionId, String type, String title,
-    String text, OverlayDialogManager dialogManager,
-    {ChatModel? chatModel}) {
-  dialogManager.dismissAll();
-  dialogManager.show((setState, close, context) {
-    onCancel() {
-      closeConnection();
-    }
-
-    return CustomAlertDialog(
-      title: null,
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          msgboxContent(type, title, text),
-          if (chatModel != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              width: 380,
-              height: 250,
-              decoration: BoxDecoration(
-                border: Border.all(color: Theme.of(context).dividerColor),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: ChatPage(chatModel: chatModel),
-              ),
-            ),
-          ],
-        ],
-      ),
-      actions: [
-        dialogButton('Cancel', onPressed: onCancel, isOutline: true),
-      ],
-      onCancel: onCancel,
-    );
-  });
-}""",
-                "embed live ChatPage inside showWaitAcceptDialog",
-            ),
-            (
-                "exact",
-                """void wrongPasswordDialog(SessionID sessionId,
-    OverlayDialogManager dialogManager, type, title, text) {""",
-                """void wrongPasswordDialog(SessionID sessionId,
-    OverlayDialogManager dialogManager, type, title, text,
-    {ChatModel? chatModel}) {""",
-                "add chatModel param to wrongPasswordDialog",
-            ),
-            (
-                "exact",
-                """    submit() {
-      enterPasswordDialog(sessionId, dialogManager);
-    }""",
-                """    submit() {
-      enterPasswordDialog(sessionId, dialogManager, chatModel: chatModel);
-    }""",
-                "forward chatModel from wrongPasswordDialog to enterPasswordDialog",
-            ),
-            (
-                "exact",
-                """void enterPasswordDialog(
-    SessionID sessionId, OverlayDialogManager dialogManager) async {
-  await _connectDialog(
-    sessionId,
-    dialogManager,
-    passwordController: TextEditingController(),
-  );
-}""",
-                """void enterPasswordDialog(
-    SessionID sessionId, OverlayDialogManager dialogManager,
-    {ChatModel? chatModel}) async {
-  await _connectDialog(
-    sessionId,
-    dialogManager,
-    passwordController: TextEditingController(),
-    chatModel: chatModel,
-  );
-}""",
-                "add chatModel param to enterPasswordDialog",
-            ),
-            (
-                "exact",
-                """_connectDialog(
-  SessionID sessionId,
-  OverlayDialogManager dialogManager, {
-  TextEditingController? osUsernameController,
-  TextEditingController? osPasswordController,
-  TextEditingController? passwordController,
-  String? osAccountDescTip,
-  bool waitForAccept = false,
-}) async {""",
-                """_connectDialog(
-  SessionID sessionId,
-  OverlayDialogManager dialogManager, {
-  TextEditingController? osUsernameController,
-  TextEditingController? osPasswordController,
-  TextEditingController? passwordController,
-  String? osAccountDescTip,
-  bool waitForAccept = false,
-  ChatModel? chatModel,
-}) async {""",
-                "add chatModel param to _connectDialog",
-            ),
-            (
-                "exact",
-                """      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        osAccountWidget(),
-        osUsernameController == null || passwordController == null
-            ? Offstage()
-            : Container(height: 12),
-        passwdWidget(),
-      ]),""",
-                """      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        osAccountWidget(),
-        osUsernameController == null || passwordController == null
-            ? Offstage()
-            : Container(height: 12),
-        passwdWidget(),
-        if (chatModel != null) ...[
-          const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Chat pré-aceite com o usuário:',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Container(
-            width: 380,
-            height: 220,
-            decoration: BoxDecoration(
-              border: Border.all(color: Theme.of(context).dividerColor),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: ChatPage(chatModel: chatModel),
-            ),
-          ),
-        ],
-      ]),""",
-                "embed live pre-accept ChatPage inside _connectDialog",
-            ),
-        ],
-    )
-
+    # Lado do tecnico: inicializar ChatModel no pre-aceite e liberar barra superior estilo AnyDesk
     patch_file(
         "flutter/lib/models/model.dart",
         [
@@ -337,16 +157,14 @@ import '../../models/chat_model.dart';""",
                 """    if (type == 're-input-password') {
       parent.target?.chatModel
           .changeCurrentKey(MessageKey(peerId, ChatModel.clientModeID));
-      wrongPasswordDialog(sessionId, dialogManager, type, title, text,
-          chatModel: parent.target?.chatModel);
+      wrongPasswordDialog(sessionId, dialogManager, type, title, text);
     } else if (type == 'input-2fa') {
       enter2FaDialog(sessionId, dialogManager);
     } else if (type == 'input-password') {
       parent.target?.chatModel
           .changeCurrentKey(MessageKey(peerId, ChatModel.clientModeID));
-      enterPasswordDialog(sessionId, dialogManager,
-          chatModel: parent.target?.chatModel);""",
-                "pass chatModel to password/pre-accept dialogs in model.dart",
+      enterPasswordDialog(sessionId, dialogManager);""",
+                "initialize client chat key on password dialogs in model.dart",
             ),
             (
                 "exact",
@@ -354,37 +172,183 @@ import '../../models/chat_model.dart';""",
                 """    } else if (type == 'wait-remote-accept-nook') {
       parent.target?.chatModel
           .changeCurrentKey(MessageKey(peerId, ChatModel.clientModeID));
-      showWaitAcceptDialog(sessionId, type, title, text, dialogManager,
-          chatModel: parent.target?.chatModel);""",
-                "initialize client chat key and pass chatModel to wait dialog",
+      showWaitAcceptDialog(sessionId, type, title, text, dialogManager);""",
+                "initialize client chat key on wait-remote-accept-nook",
             ),
         ],
     )
 
+    # Permitir que a barra superior fique clicavel acima do modal de senha/espera
     patch_file(
-        "flutter/lib/models/chat_model.dart",
+        "flutter/lib/desktop/pages/remote_page.dart",
         [
             (
                 "exact",
-                """      if (isConnManager) {
-        if (!_isShowCMSidePage) {
-          await toggleCMChatPage(key);
-        }
+                """              Obx(() => _ffi.inputModel.relativeMouseMode.value
+                  ? const Offstage()
+                  : _ffi.ffiModel.pi.isSet.isTrue
+                      ? Overlay(initialEntries: [
+                          OverlayEntry(builder: remoteToolbar)
+                        ])
+                      : remoteToolbar(context)),
+              _ffi.ffiModel.pi.isSet.isFalse ? emptyOverlay() : Offstage(),""",
+                """              _ffi.ffiModel.pi.isSet.isFalse ? emptyOverlay() : Offstage(),
+              Obx(() => _ffi.inputModel.relativeMouseMode.value
+                  ? const Offstage()
+                  : Overlay(initialEntries: [
+                      OverlayEntry(builder: remoteToolbar)
+                    ])),""",
+                "render RemoteToolbar above pre-accept modal overlay",
+            ),
+        ],
+    )
+
+    # Barra superior estilo AnyDesk: visual limpo com ID a esquerda, icones apagadinhos no pre-aceite e Chat+Fechar ativos
+    patch_file(
+        "flutter/lib/desktop/widgets/remote_toolbar.dart",
+        [
+            (
+                "exact",
+                """  Widget _buildToolbar(
+      BuildContext context, _ToolbarEdge edge, bool isHorizontal) {
+    final List<Widget> toolbarItems = [];
+    toolbarItems.add(_PinMenu(state: widget.state));
+    toolbarItems.add(Obx(() {
+      final privacyModeState = PrivacyModeState.find(widget.id);
+      if ((privacyModeState.isEmpty ||
+              allowDisplaySwitchInPrivacyMode(pi, privacyModeState.value)) &&
+          pi.displaysCount.value > 1 &&
+          mainGetLocalBoolOptionSync(kOptionAllowMonitorSwitchMainToolbar)) {
+        return _MainMonitorSwitchButton(id: widget.id, ffi: widget.ffi);
       } else {
-        if (_isChatOverlayHide()) {
-          await toggleChatOverlay();
-        }
-      }""",
-                """      if (isConnManager) {
-        if (!_isShowCMSidePage) {
-          await toggleCMChatPage(key);
-        }
-      } else if (parent.target?.ffiModel.pi.isSet.isTrue == true) {
-        if (_isChatOverlayHide()) {
-          await toggleChatOverlay();
-        }
-      }""",
-                "avoid duplicate overlay while pre-accept wait dialog is showing",
+        return const Offstage();
+      }
+    }));
+    if (!isWebDesktop) {
+      toolbarItems.add(_MobileActionMenu(ffi: widget.ffi));
+    }
+
+    toolbarItems.add(Obx(() {
+      final privacyModeState = PrivacyModeState.find(widget.id);
+      if ((privacyModeState.isEmpty ||
+              allowDisplaySwitchInPrivacyMode(pi, privacyModeState.value)) &&
+          pi.displaysCount.value > 1) {
+        return _MonitorMenu(
+            id: widget.id,
+            ffi: widget.ffi,
+            edge: edge,
+            setRemoteState: widget.setRemoteState);
+      } else {
+        return Offstage();
+      }
+    }));
+
+    toolbarItems
+        .add(_ControlMenu(id: widget.id, ffi: widget.ffi, state: widget.state));
+    toolbarItems.add(_DisplayMenu(
+      id: widget.id,
+      ffi: widget.ffi,
+      state: widget.state,
+      setFullscreen: _setFullscreen,
+    ));
+    // Do not show keyboard for camera connection type.
+    if (widget.ffi.connType == ConnType.defaultConn) {
+      toolbarItems.add(_KeyboardMenu(id: widget.id, ffi: widget.ffi));
+    }
+    toolbarItems.add(_ChatMenu(id: widget.id, ffi: widget.ffi));
+    if (!isWeb) {
+      toolbarItems.add(_VoiceCallMenu(id: widget.id, ffi: widget.ffi));
+    }
+    if (!isWeb) toolbarItems.add(_RecordMenu());
+    toolbarItems.add(_CloseMenu(id: widget.id, ffi: widget.ffi));
+    final toolbarBorderRadius = BorderRadius.all(Radius.circular(4.0));""",
+                """  Widget _buildToolbar(
+      BuildContext context, _ToolbarEdge edge, bool isHorizontal) {
+    final bool isPreAccept = pi.isSet.isFalse;
+    Widget preAcceptGuard(Widget child) => isPreAccept
+        ? IgnorePointer(child: Opacity(opacity: 0.30, child: child))
+        : child;
+
+    final List<Widget> toolbarItems = [];
+    if (isHorizontal) {
+      toolbarItems.add(Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isPreAccept
+                    ? const Color(0xFFF59E0B)
+                    : const Color(0xFF16A34A),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(width: 1, height: 16, color: Theme.of(context).dividerColor),
+            const SizedBox(width: 8),
+            Text(
+              widget.ffi.id,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 6),
+          ],
+        ),
+      ));
+    }
+    toolbarItems.add(_PinMenu(state: widget.state));
+    toolbarItems.add(preAcceptGuard(Obx(() {
+      final privacyModeState = PrivacyModeState.find(widget.id);
+      if ((privacyModeState.isEmpty ||
+              allowDisplaySwitchInPrivacyMode(pi, privacyModeState.value)) &&
+          pi.displaysCount.value > 1 &&
+          mainGetLocalBoolOptionSync(kOptionAllowMonitorSwitchMainToolbar)) {
+        return _MainMonitorSwitchButton(id: widget.id, ffi: widget.ffi);
+      } else {
+        return const Offstage();
+      }
+    })));
+    if (!isWebDesktop) {
+      toolbarItems.add(preAcceptGuard(_MobileActionMenu(ffi: widget.ffi)));
+    }
+
+    toolbarItems.add(preAcceptGuard(Obx(() {
+      final privacyModeState = PrivacyModeState.find(widget.id);
+      if ((privacyModeState.isEmpty ||
+              allowDisplaySwitchInPrivacyMode(pi, privacyModeState.value)) &&
+          pi.displaysCount.value > 1) {
+        return _MonitorMenu(
+            id: widget.id,
+            ffi: widget.ffi,
+            edge: edge,
+            setRemoteState: widget.setRemoteState);
+      } else {
+        return Offstage();
+      }
+    })));
+
+    toolbarItems.add(preAcceptGuard(
+        _ControlMenu(id: widget.id, ffi: widget.ffi, state: widget.state)));
+    toolbarItems.add(preAcceptGuard(_DisplayMenu(
+      id: widget.id,
+      ffi: widget.ffi,
+      state: widget.state,
+      setFullscreen: _setFullscreen,
+    )));
+    // Do not show keyboard for camera connection type.
+    if (widget.ffi.connType == ConnType.defaultConn) {
+      toolbarItems.add(preAcceptGuard(_KeyboardMenu(id: widget.id, ffi: widget.ffi)));
+    }
+    toolbarItems.add(_ChatMenu(id: widget.id, ffi: widget.ffi));
+    if (!isWeb) {
+      toolbarItems.add(preAcceptGuard(_VoiceCallMenu(id: widget.id, ffi: widget.ffi)));
+    }
+    if (!isWeb) toolbarItems.add(preAcceptGuard(_RecordMenu()));
+    toolbarItems.add(_CloseMenu(id: widget.id, ffi: widget.ffi));
+    final toolbarBorderRadius = BorderRadius.all(Radius.circular(8.0));""",
+                "style RemoteToolbar like AnyDesk with dimmed pre-accept controls and active Chat",
             ),
         ],
     )
@@ -407,6 +371,10 @@ def patch_ota_updates():
     }
 }""",
                 """pub fn check_software_update() {
+    if is_unified_timona_agent() {
+        clear_software_update_url();
+        return;
+    }
     let opt = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
     if config::option2bool(keys::OPTION_ENABLE_CHECK_UPDATE, &opt) {
         std::thread::spawn(move || allow_err!(do_check_software_update()));
