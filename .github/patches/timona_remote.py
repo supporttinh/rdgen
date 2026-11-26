@@ -901,7 +901,7 @@ def patch_technician_preaccept_chat():
                           borderRadius: BorderRadius.circular(5.0),
                           color: bgColor,
                         ),
-                        child: Center(child: icon))),""",
+                        child: Center(child: icon)))),""",
                 "apply AnyDesk monochrome flat styling to _IconSubmenuButton",
             ),
             (
