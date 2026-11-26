@@ -178,10 +178,32 @@ def patch_technician_preaccept_chat():
         ],
     )
 
-    # Permitir que a barra superior fique clicavel acima do modal de senha/espera
+    # Fundo cinza neutro estilo AnyDesk no pre-aceite, barra acima do modal e limpeza do chat ao conectar
     patch_file(
         "flutter/lib/desktop/pages/remote_page.dart",
         [
+            (
+                "exact",
+                """          Container(
+              color: kColorCanvas,
+              child: RawKeyFocusScope(""",
+                """          Obx(() => Container(
+              color: _ffi.ffiModel.pi.isSet.isFalse
+                  ? const Color(0xFF707070)
+                  : kColorCanvas,
+              child: RawKeyFocusScope(""",
+                "use AnyDesk neutral grey backdrop during pre-accept",
+            ),
+            (
+                "exact",
+                """                  inputModel: _ffi.inputModel,
+                  child: getBodyForDesktop(context))),
+          Stack(""",
+                """                  inputModel: _ffi.inputModel,
+                  child: getBodyForDesktop(context)))),
+          Stack(""",
+                "close Obx wrapper on remote canvas background",
+            ),
             (
                 "exact",
                 """              Obx(() => _ffi.inputModel.relativeMouseMode.value
@@ -200,13 +222,148 @@ def patch_technician_preaccept_chat():
                     ])),""",
                 "render RemoteToolbar above pre-accept modal overlay",
             ),
+            (
+                "exact",
+                """            _ffi.dialogManager.dismissAll();
+            // Recreate the block state to refresh the state.
+            _blockableOverlayState = BlockableOverlayState();""",
+                """            _ffi.dialogManager.dismissAll();
+            _ffi.chatModel.hideChatOverlay();
+            // Recreate the block state to refresh the state.
+            _blockableOverlayState = BlockableOverlayState();""",
+                "clean up pre-accept chat overlay when switching to live overlay",
+            ),
         ],
     )
 
-    # Barra superior estilo AnyDesk: visual limpo com ID a esquerda, icones apagadinhos no pre-aceite e Chat+Fechar ativos
+    # Impedir que a janela flutuante do chat fique atras da barra superior
+    patch_file(
+        "flutter/lib/common/widgets/overlay.dart",
+        [
+            (
+                "exact",
+                """    if (draggablePositions.chatWindow.isInvalid()) {
+      draggablePositions.chatWindow.update(position);
+    }""",
+                """    if (draggablePositions.chatWindow.isInvalid()) {
+      draggablePositions.chatWindow.update(position);
+    } else if (isDesktop && draggablePositions.chatWindow.pos.dy < 50.0) {
+      draggablePositions.chatWindow
+          .update(Offset(draggablePositions.chatWindow.pos.dx, 50.0));
+    }""",
+                "keep draggable chat window clear below top AnyDesk toolbar",
+            ),
+        ],
+    )
+
+    # Barra superior estilo AnyDesk: corrigir init antes de pi.isSet, barra full-width, icones apagados no pre-aceite e Chat 1-clique
     patch_file(
         "flutter/lib/desktop/widgets/remote_toolbar.dart",
         [
+            (
+                "exact",
+                """  int _dockingOptionSyncSerial = 0;
+  int _dragEpoch = 0;""",
+                """  int _dockingOptionSyncSerial = 0;
+  int _dragEpoch = 0;
+  Worker? _peerSetWorker;""",
+                "add pi.isSet listener worker to RemoteToolbarState",
+            ),
+            (
+                "exact",
+                """    final cached = _cachedToolbarDockingOptions(widget.ffi.sessionId);
+    if (cached == null && pi.isSet.isFalse) {
+      return;
+    }""",
+                """    final cached = _cachedToolbarDockingOptions(widget.ffi.sessionId);
+    if (cached == null && pi.isSet.isFalse) {
+      // Garantir que a barra apareca imediatamente no pre-aceite antes do PeerInfo chegar
+      _edge.value = _ToolbarEdge.top;
+      _fraction.value = 0.5;
+      _multiEdgeEnabled.value = multiEdgeEnabled;
+      _dockingOptionsInitialized.value = true;
+      _pendingDockingOptionSync = false;
+      return;
+    }""",
+                "initialize docking options defaults while pi.isSet is false",
+            ),
+            (
+                "exact",
+                """    _debouncerHide = Debouncer<int>(""",
+                """    _peerSetWorker = ever(pi.isSet, (bool isSet) {
+      if (isSet && mounted) {
+        _syncDockingOptions(force: true);
+      }
+    });
+
+    _debouncerHide = Debouncer<int>(""",
+                "re-sync docking options once PeerInfo becomes set",
+            ),
+            (
+                "exact",
+                """  @override
+  dispose() {
+    ++_dockingOptionSyncSerial;""",
+                """  @override
+  dispose() {
+    _peerSetWorker?.dispose();
+    ++_dockingOptionSyncSerial;""",
+                "dispose peerSetWorker in RemoteToolbarState",
+            ),
+            (
+                "exact",
+                """    return Obx(() {
+      // Wait for initialization to complete to prevent flickering
+      if (!widget.state.initialized.value ||
+          !_dockingOptionsInitialized.value) {
+        return const SizedBox.shrink();
+      }
+      // If toolbar is hidden, return empty widget
+      if (hide.value) {
+        return const SizedBox.shrink();
+      }
+      final edge = _edge.value;
+      final isHorizontal = _isHorizontalEdge(edge);""",
+                """    return Obx(() {
+      final isPreAccept = pi.isSet.isFalse;
+      // Wait for initialization to complete to prevent flickering
+      if (!isPreAccept &&
+          (!widget.state.initialized.value ||
+              !_dockingOptionsInitialized.value)) {
+        return const SizedBox.shrink();
+      }
+      // If toolbar is hidden, return empty widget
+      if (!isPreAccept && hide.value) {
+        return const SizedBox.shrink();
+      }
+      final edge = isPreAccept ? _ToolbarEdge.top : _edge.value;
+      final isHorizontal = _isHorizontalEdge(edge);""",
+                "always display top toolbar during pre-accept",
+            ),
+            (
+                "exact",
+                """      final toolbar = Align(
+        alignment: _alignmentForEdge(edge, _fraction.value),
+        child: KeyedSubtree(
+          key: _toolbarKey,
+          child: collapse.isFalse
+              ? _buildToolbar(context, edge, isHorizontal)
+              : _buildDraggableCollapse(context, edge, isHorizontal),
+        ),
+      );""",
+                """      final toolbar = Align(
+        alignment: isPreAccept
+            ? Alignment.topCenter
+            : _alignmentForEdge(edge, _fraction.value),
+        child: KeyedSubtree(
+          key: _toolbarKey,
+          child: (isPreAccept || collapse.isFalse)
+              ? _buildToolbar(context, edge, isHorizontal)
+              : _buildDraggableCollapse(context, edge, isHorizontal),
+        ),
+      );""",
+                "keep toolbar expanded and top-centered during pre-accept",
+            ),
             (
                 "exact",
                 """  Widget _buildToolbar(
@@ -265,42 +422,77 @@ def patch_technician_preaccept_chat():
                 """  Widget _buildToolbar(
       BuildContext context, _ToolbarEdge edge, bool isHorizontal) {
     final bool isPreAccept = pi.isSet.isFalse;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final bool useAnyDeskFullBar = isHorizontal && edge == _ToolbarEdge.top;
     Widget preAcceptGuard(Widget child) => isPreAccept
-        ? IgnorePointer(child: Opacity(opacity: 0.30, child: child))
+        ? IgnorePointer(child: Opacity(opacity: 0.28, child: child))
         : child;
 
     final List<Widget> toolbarItems = [];
-    if (isHorizontal) {
-      toolbarItems.add(Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: isPreAccept
-                    ? const Color(0xFFF59E0B)
-                    : const Color(0xFF16A34A),
+    if (useAnyDeskFullBar) {
+      toolbarItems.add(Flexible(
+        fit: FlexFit.loose,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.check_circle,
+                size: 18,
+                color: Color(0xFF1E9E49),
               ),
-            ),
-            const SizedBox(width: 8),
-            Container(width: 1, height: 16, color: Theme.of(context).dividerColor),
-            const SizedBox(width: 8),
-            Text(
-              widget.ffi.id,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(width: 6),
-          ],
+              const SizedBox(width: 8),
+              Container(
+                width: 20,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E9E49),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: const Icon(
+                  Icons.check,
+                  size: 13,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                width: 1,
+                height: 18,
+                color: isDark ? Colors.white24 : const Color(0xFFD1D5DB),
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  widget.ffi.id,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.white : const Color(0xFF1F2937),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ));
+      toolbarItems.add(const Spacer());
     }
-    toolbarItems.add(_PinMenu(state: widget.state));
+
+    toolbarItems.add(preAcceptGuard(_PinMenu(state: widget.state)));
     toolbarItems.add(preAcceptGuard(Obx(() {
       final privacyModeState = PrivacyModeState.find(widget.id);
+      if (pi.isSet.isFalse) {
+        return _IconMenuButton(
+          assetName: 'assets/screen.svg',
+          tooltip: 'Select Monitor',
+          onPressed: () {},
+          color: _ToolbarTheme.inactiveColor,
+          hoverColor: _ToolbarTheme.hoverInactiveColor,
+        );
+      }
       if ((privacyModeState.isEmpty ||
               allowDisplaySwitchInPrivacyMode(pi, privacyModeState.value)) &&
           pi.displaysCount.value > 1 &&
@@ -329,26 +521,431 @@ def patch_technician_preaccept_chat():
       }
     })));
 
-    toolbarItems.add(preAcceptGuard(
-        _ControlMenu(id: widget.id, ffi: widget.ffi, state: widget.state)));
     toolbarItems.add(preAcceptGuard(_DisplayMenu(
       id: widget.id,
       ffi: widget.ffi,
       state: widget.state,
       setFullscreen: _setFullscreen,
     )));
+    toolbarItems.add(_ChatMenu(id: widget.id, ffi: widget.ffi));
+    toolbarItems.add(preAcceptGuard(
+        _ControlMenu(id: widget.id, ffi: widget.ffi, state: widget.state)));
     // Do not show keyboard for camera connection type.
     if (widget.ffi.connType == ConnType.defaultConn) {
-      toolbarItems.add(preAcceptGuard(_KeyboardMenu(id: widget.id, ffi: widget.ffi)));
+      toolbarItems
+          .add(preAcceptGuard(_KeyboardMenu(id: widget.id, ffi: widget.ffi)));
     }
-    toolbarItems.add(_ChatMenu(id: widget.id, ffi: widget.ffi));
     if (!isWeb) {
-      toolbarItems.add(preAcceptGuard(_VoiceCallMenu(id: widget.id, ffi: widget.ffi)));
+      toolbarItems
+          .add(preAcceptGuard(_VoiceCallMenu(id: widget.id, ffi: widget.ffi)));
     }
     if (!isWeb) toolbarItems.add(preAcceptGuard(_RecordMenu()));
     toolbarItems.add(_CloseMenu(id: widget.id, ffi: widget.ffi));
-    final toolbarBorderRadius = BorderRadius.all(Radius.circular(8.0));""",
-                "style RemoteToolbar like AnyDesk with dimmed pre-accept controls and active Chat",
+    final toolbarBorderRadius = useAnyDeskFullBar
+        ? BorderRadius.zero
+        : const BorderRadius.all(Radius.circular(4.0));""",
+                "style RemoteToolbar literally like AnyDesk top bar",
+            ),
+            (
+                "exact",
+                """    final toolbarMaterial = Material(
+      elevation: _ToolbarTheme.elevation,
+      shadowColor: MyTheme.color(context).shadow,
+      borderRadius: toolbarBorderRadius,
+      color: Theme.of(context)
+          .menuBarTheme
+          .style
+          ?.backgroundColor
+          ?.resolve(MaterialState.values.toSet()),
+      child: SingleChildScrollView(
+        scrollDirection: innerAxis,
+        child: Theme(
+          data: themeData(),
+          child: _ToolbarTheme.borderWrapper(
+              context,
+              Flex(
+                direction: innerAxis,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  spacer,
+                  ...toolbarItems,
+                  spacer,
+                ],
+              ),
+              toolbarBorderRadius),
+        ),
+      ),
+    );
+    final handle = _buildDraggableCollapse(context, edge, isHorizontal);
+    // The handle hangs off the interior face of the toolbar (away from the
+    // docked edge), centered along that face by the Flex's default cross-axis
+    // alignment, so the icons themselves sit flush against the docked edge.
+    final children = (edge == _ToolbarEdge.top || edge == _ToolbarEdge.left)
+        ? [toolbarMaterial, handle]
+        : [handle, toolbarMaterial];
+    return Flex(
+      direction: outerAxis,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
+    );""",
+                """    final toolbarContent = Theme(
+      data: themeData(),
+      child: useAnyDeskFullBar
+          ? Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF252526) : Colors.white,
+                border: Border(
+                  bottom: BorderSide(
+                    color: isDark
+                        ? Colors.white12
+                        : const Color(0xFFD1D5DB),
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  ...toolbarItems,
+                  const SizedBox(width: 4),
+                ],
+              ),
+            )
+          : SingleChildScrollView(
+              scrollDirection: innerAxis,
+              child: _ToolbarTheme.borderWrapper(
+                  context,
+                  Flex(
+                    direction: innerAxis,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      spacer,
+                      ...toolbarItems,
+                      spacer,
+                    ],
+                  ),
+                  toolbarBorderRadius),
+            ),
+    );
+    final toolbarMaterial = Material(
+      elevation: useAnyDeskFullBar ? 1 : _ToolbarTheme.elevation,
+      shadowColor: MyTheme.color(context).shadow,
+      borderRadius: toolbarBorderRadius,
+      color: useAnyDeskFullBar
+          ? (isDark ? const Color(0xFF252526) : Colors.white)
+          : Theme.of(context)
+              .menuBarTheme
+              .style
+              ?.backgroundColor
+              ?.resolve(MaterialState.values.toSet()),
+      child: toolbarContent,
+    );
+    if (isPreAccept) {
+      return toolbarMaterial;
+    }
+    final handle = _buildDraggableCollapse(context, edge, isHorizontal);
+    // The handle hangs off the interior face of the toolbar (away from the
+    // docked edge), centered along that face by the Flex's default cross-axis
+    // alignment, so the icons themselves sit flush against the docked edge.
+    final children = (edge == _ToolbarEdge.top || edge == _ToolbarEdge.left)
+        ? [toolbarMaterial, handle]
+        : [handle, toolbarMaterial];
+    return Flex(
+      direction: outerAxis,
+      mainAxisSize: MainAxisSize.min,
+      children: children,
+    );""",
+                "render full-width AnyDesk bar without drag handle before accept",
+            ),
+            (
+                "exact",
+                """  @override
+  Widget build(BuildContext context) {
+    if (isWeb) {
+      return buildTextChatButton();
+    } else {
+      return _IconSubmenuButton(
+          tooltip: 'Chat',
+          key: chatButtonKey,
+          svg: 'assets/chat.svg',
+          ffi: widget.ffi,
+          color: _ToolbarTheme.blueColor,
+          hoverColor: _ToolbarTheme.hoverBlueColor,
+          menuChildrenGetter: (_) => [textChat(), voiceCall()]);
+    }
+  }
+
+  buildTextChatButton() {
+    return _IconMenuButton(
+      assetName: 'assets/message_24dp_5F6368.svg',
+      tooltip: 'Text chat',
+      key: chatButtonKey,
+      onPressed: _textChatOnPressed,
+      color: _ToolbarTheme.blueColor,
+      hoverColor: _ToolbarTheme.hoverBlueColor,
+    );
+  }""",
+                """  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final isPreAccept = widget.ffi.ffiModel.pi.isSet.isFalse;
+      if (isWeb || isPreAccept) {
+        return buildTextChatButton();
+      } else {
+        return _IconSubmenuButton(
+            tooltip: 'Chat',
+            key: chatButtonKey,
+            svg: 'assets/chat.svg',
+            ffi: widget.ffi,
+            color: _ToolbarTheme.blueColor,
+            hoverColor: _ToolbarTheme.hoverBlueColor,
+            menuChildrenGetter: (_) => [textChat(), voiceCall()]);
+      }
+    });
+  }
+
+  buildTextChatButton() {
+    return _IconMenuButton(
+      assetName: 'assets/message_24dp_5F6368.svg',
+      tooltip: 'Text chat',
+      key: chatButtonKey,
+      onPressed: _textChatOnPressed,
+      color: _ToolbarTheme.blueColor,
+      hoverColor: _ToolbarTheme.hoverBlueColor,
+    );
+  }""",
+                "make pre-accept Chat icon 1-click direct toggle",
+            ),
+            (
+                "exact",
+                """  _textChatOnPressed() {
+    RenderBox? renderBox =
+        chatButtonKey.currentContext?.findRenderObject() as RenderBox?;
+    Offset? initPos;
+    if (renderBox != null) {
+      final pos = renderBox.localToGlobal(Offset.zero);
+      initPos = Offset(pos.dx, pos.dy + _ToolbarTheme.dividerHeight);
+    }
+    widget.ffi.chatModel
+        .changeCurrentKey(MessageKey(widget.ffi.id, ChatModel.clientModeID));
+    widget.ffi.chatModel.toggleChatOverlay(chatInitPos: initPos);
+  }""",
+                """  _textChatOnPressed() {
+    RenderBox? renderBox =
+        chatButtonKey.currentContext?.findRenderObject() as RenderBox?;
+    Offset? initPos;
+    if (renderBox != null) {
+      final pos = renderBox.localToGlobal(Offset.zero);
+      final screenW = MediaQuery.of(context).size.width;
+      final maxDx = screenW - 270.0 > 16.0 ? screenW - 270.0 : 16.0;
+      final dx = (pos.dx - 210.0).clamp(16.0, maxDx);
+      initPos = Offset(dx, 52.0);
+    }
+    widget.ffi.chatModel
+        .changeCurrentKey(MessageKey(widget.ffi.id, ChatModel.clientModeID));
+    widget.ffi.chatModel.toggleChatOverlay(chatInitPos: initPos);
+  }""",
+                "open pre-accept Chat window cleanly below top toolbar",
+            ),
+            (
+                "exact",
+                """    assert(widget.assetName != null || widget.icon != null);
+    final icon = widget.icon ??
+        SvgPicture.asset(
+          widget.assetName!,
+          colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+          width: _ToolbarTheme.buttonSize,
+          height: _ToolbarTheme.buttonSize,
+        );
+    var button = SizedBox(
+      width: widget.width ?? _ToolbarTheme.buttonSize,
+      height: _ToolbarTheme.buttonSize,
+      child: MenuItemButton(
+          style: ButtonStyle(
+              backgroundColor: MaterialStatePropertyAll(Colors.transparent),
+              padding: MaterialStatePropertyAll(EdgeInsets.zero),
+              overlayColor: MaterialStatePropertyAll(Colors.transparent)),
+          onHover: (value) => setState(() {
+                hover = value;
+              }),
+          onPressed: widget.onPressed,
+          child: Tooltip(
+            message: translate(widget.tooltip),
+            child: Material(
+                type: MaterialType.transparency,
+                child: Ink(
+                    decoration: BoxDecoration(
+                      borderRadius:
+                          BorderRadius.circular(_ToolbarTheme.iconRadius),
+                      color: hover ? widget.hoverColor : widget.color,
+                    ),
+                    child: icon)),
+          )),
+    ).marginSymmetric(""",
+                """    assert(widget.assetName != null || widget.icon != null);
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final bool isMonochrome = widget.topLevel;
+    final bool isRed = widget.color == _ToolbarTheme.redColor;
+    final Color iconFg = isMonochrome
+        ? (isRed
+            ? const Color(0xFFDC2626)
+            : (isDark ? const Color(0xFFE5E7EB) : const Color(0xFF2F3640)))
+        : Colors.white;
+    final Color bgColor = isMonochrome
+        ? (hover
+            ? (isRed
+                ? const Color(0xFFFEE2E2)
+                : (isDark ? Colors.white12 : const Color(0xFFEAECEF)))
+            : Colors.transparent)
+        : (hover ? widget.hoverColor : widget.color);
+    final icon = widget.icon ??
+        SvgPicture.asset(
+          widget.assetName!,
+          colorFilter: ColorFilter.mode(iconFg, BlendMode.srcIn),
+          width: isMonochrome ? 22 : _ToolbarTheme.buttonSize,
+          height: isMonochrome ? 22 : _ToolbarTheme.buttonSize,
+        );
+    var button = SizedBox(
+      width: widget.width ?? _ToolbarTheme.buttonSize,
+      height: _ToolbarTheme.buttonSize,
+      child: MenuItemButton(
+          style: ButtonStyle(
+              backgroundColor: MaterialStatePropertyAll(Colors.transparent),
+              padding: MaterialStatePropertyAll(EdgeInsets.zero),
+              overlayColor: MaterialStatePropertyAll(Colors.transparent)),
+          onHover: (value) => setState(() {
+                hover = value;
+              }),
+          onPressed: widget.onPressed,
+          child: Tooltip(
+            message: translate(widget.tooltip),
+            child: Material(
+                type: MaterialType.transparency,
+                child: Ink(
+                    decoration: BoxDecoration(
+                      borderRadius:
+                          BorderRadius.circular(isMonochrome ? 5.0 : _ToolbarTheme.iconRadius),
+                      color: bgColor,
+                    ),
+                    child: Center(child: icon))),
+          )),
+    ).marginSymmetric(""",
+                "apply AnyDesk monochrome flat styling to _IconMenuButton",
+            ),
+            (
+                "exact",
+                """    assert(widget.svg != null || widget.icon != null);
+    final icon = widget.icon ??
+        SvgPicture.asset(
+          widget.svg!,
+          colorFilter: ColorFilter.mode(Colors.white, BlendMode.srcIn),
+          width: _ToolbarTheme.buttonSize,
+          height: _ToolbarTheme.buttonSize,
+        );
+    final button = SizedBox(
+        width: widget.width ?? _ToolbarTheme.buttonSize,
+        height: _ToolbarTheme.buttonSize,
+        child: SubmenuButton(
+            menuStyle:
+                widget.menuStyle ?? _ToolbarTheme.defaultMenuStyle(context),
+            style: _ToolbarTheme.defaultMenuButtonStyle,
+            onHover: (value) => setState(() {
+                  hover = value;
+                }),
+            child: Tooltip(
+                message: translate(widget.tooltip),
+                child: Material(
+                    type: MaterialType.transparency,
+                    child: Ink(
+                        decoration: BoxDecoration(
+                          borderRadius:
+                              BorderRadius.circular(_ToolbarTheme.iconRadius),
+                          color: hover ? widget.hoverColor : widget.color,
+                        ),
+                        child: icon))),""",
+                """    assert(widget.svg != null || widget.icon != null);
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final bool isRed = widget.color == _ToolbarTheme.redColor;
+    final Color iconFg = isRed
+        ? const Color(0xFFDC2626)
+        : (isDark ? const Color(0xFFE5E7EB) : const Color(0xFF2F3640));
+    final Color bgColor = hover
+        ? (isRed
+            ? const Color(0xFFFEE2E2)
+            : (isDark ? Colors.white12 : const Color(0xFFEAECEF)))
+        : Colors.transparent;
+    final icon = widget.icon ??
+        SvgPicture.asset(
+          widget.svg!,
+          colorFilter: ColorFilter.mode(iconFg, BlendMode.srcIn),
+          width: 22,
+          height: 22,
+        );
+    final button = SizedBox(
+        width: widget.width ?? _ToolbarTheme.buttonSize,
+        height: _ToolbarTheme.buttonSize,
+        child: SubmenuButton(
+            menuStyle:
+                widget.menuStyle ?? _ToolbarTheme.defaultMenuStyle(context),
+            style: _ToolbarTheme.defaultMenuButtonStyle,
+            onHover: (value) => setState(() {
+                  hover = value;
+                }),
+            child: Tooltip(
+                message: translate(widget.tooltip),
+                child: Material(
+                    type: MaterialType.transparency,
+                    child: Ink(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(5.0),
+                          color: bgColor,
+                        ),
+                        child: Center(child: icon))),""",
+                "apply AnyDesk monochrome flat styling to _IconSubmenuButton",
+            ),
+            (
+                "exact",
+                """              SvgPicture.asset(
+                'assets/display_switcher.svg',
+                colorFilter:
+                    const ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                width: _ToolbarTheme.buttonSize,
+                height: _ToolbarTheme.buttonSize,
+              ),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontSize: 11,
+                  height: 1,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),""",
+                """              SvgPicture.asset(
+                'assets/display_switcher.svg',
+                colorFilter: ColorFilter.mode(
+                    Theme.of(context).brightness == Brightness.dark
+                        ? const Color(0xFFE5E7EB)
+                        : const Color(0xFF2F3640),
+                    BlendMode.srcIn),
+                width: 24,
+                height: 24,
+              ),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? const Color(0xFF1F2937)
+                      : Colors.white,
+                  fontSize: 10,
+                  height: 1,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),""",
+                "match monitor switcher icon contrast to monochrome AnyDesk bar",
             ),
         ],
     )
